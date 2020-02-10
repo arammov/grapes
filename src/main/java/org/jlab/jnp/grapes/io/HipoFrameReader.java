@@ -10,9 +10,11 @@ import java.nio.file.Path;
 import org.jlab.clara.engine.EngineDataType;
 import org.jlab.clara.std.services.AbstractEventReaderService;
 import org.jlab.clara.std.services.EventReaderException;
-import org.jlab.jnp.hipo.data.DataFrame;
-import org.jlab.jnp.hipo.data.HipoEvent;
-import org.jlab.jnp.hipo.io.HipoReader;
+import org.jlab.jnp.hipo4.data.DataFrame;
+import org.jlab.jnp.hipo4.data.DataFrameBuilder;
+import org.jlab.jnp.hipo4.data.Event;
+import org.jlab.jnp.hipo4.data.Node;
+import org.jlab.jnp.hipo4.io.HipoReader;
 import org.json.JSONObject;
 
 /**
@@ -20,7 +22,15 @@ import org.json.JSONObject;
  * @author gavalian
  */
 public class HipoFrameReader extends AbstractEventReaderService<HipoReader> {
-        @Override
+    
+    private int maxEventsFrame = 10;
+    private int maxSizeFrame   = 1024*1024;
+    
+    
+    public void setMaxEvents(int __nevents){ maxEventsFrame = __nevents;}
+    public void setMaxSize(int __nsize){ maxSizeFrame = __nsize;}
+    
+    @Override
     protected HipoReader createReader(Path file, JSONObject opts)
             throws EventReaderException {
         try {
@@ -39,7 +49,10 @@ public class HipoFrameReader extends AbstractEventReaderService<HipoReader> {
 
     @Override
     public int readEventCount() throws EventReaderException {
-        return reader.getEventCount()/50;
+        int numberOfEvents = reader.getEventCount()/this.maxEventsFrame;
+        int leftOver       = reader.getEventCount()%this.maxEventsFrame;
+        if(leftOver>0) numberOfEvents++;
+        return numberOfEvents;//reader.getEventCount()/this.maxEventsFrame;
     }
 
     @Override
@@ -50,15 +63,29 @@ public class HipoFrameReader extends AbstractEventReaderService<HipoReader> {
     @Override
     public Object readEvent(int eventNumber) throws EventReaderException {
         try {
-            int startEvent = eventNumber*50;
-            DataFrame  frame = new DataFrame(1024*250,300);
-            for(int i = 0; i < 50; i++){
-                HipoEvent  event = reader.readEvent(startEvent+i);
-                for(int s = 0; s < 32; s++){
-                    event.unsetEventStatusBit(s);
-                }
-                frame.add(event.getDataBuffer());
+            int startEvent = eventNumber*this.maxEventsFrame;
+            DataFrameBuilder builder = new DataFrameBuilder(this.maxEventsFrame,this.maxSizeFrame);
+            Event            event   = new Event();
+            
+            if(eventNumber==0){
+                event.reset();
+                Node  control = new Node(1001,1, new int[]{1001,1});
+                event.write(control);
+                event.setEventTag(1001);
+                builder.addEvent(event.getEventBuffer().array(), 0, 
+                            event.getEventBufferSize());
             }
+            
+            for(int i = 0; i < this.maxEventsFrame; i++){
+                if(reader.hasNext()==true){
+                    reader.nextEvent(event);
+                    event.clearEventBitMask();
+                
+                    builder.addEvent(event.getEventBuffer().array(), 0, 
+                            event.getEventBufferSize());
+                }
+            }
+            DataFrame  frame = builder.build();
             //System.out.println("FRAME-READER : count = " + frame.getCount());
             return frame;
             //return reader.readEvent(eventNumber);

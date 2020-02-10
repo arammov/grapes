@@ -6,12 +6,15 @@
 package org.jlab.jnp.grapes.io;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import org.jlab.clara.engine.EngineDataType;
 import org.jlab.clara.std.services.AbstractEventWriterService;
 import org.jlab.clara.std.services.EventWriterException;
-import org.jlab.jnp.hipo.data.DataFrame;
-import org.jlab.jnp.hipo.data.HipoEvent;
-import org.jlab.jnp.hipo.io.HipoWriterStream;
+import org.jlab.jnp.hipo4.data.Bank;
+import org.jlab.jnp.hipo4.data.DataFrame;
+import org.jlab.jnp.hipo4.data.Event;
+import org.jlab.jnp.hipo4.io.HipoWriterStream;
 import org.jlab.jnp.utils.file.FileUtils;
 import org.json.JSONObject;
 
@@ -23,6 +26,8 @@ public class HipoFrameWriter extends AbstractEventWriterService<HipoWriterStream
     
     private static final String CONF_COMPRESSION = "compression";
     private static final String CONF_SCHEMA = "schema_dir";
+    private static final String CONF_FILTER = "filter";
+    private List<Bank>       schemaBankList = new ArrayList<Bank>();
     
     @Override
     protected HipoWriterStream createWriter(Path file, JSONObject opts) throws EventWriterException {
@@ -36,7 +41,23 @@ public class HipoFrameWriter extends AbstractEventWriterService<HipoWriterStream
             writer.getSchemaFactory().initFromDirectory(getSchemaDirectory(opts));
             //for(int i = 0; i < 5; i++){
             //    writer.addWriter(i, file.toString());
-            //}            
+            //}
+            /*            
+            if(opts.has(CONF_SCHEMA)){
+                System.out.println("\n***************** BANK FILTERING IS ENABLED *******************\n");
+                int schemaSize = writer.getSchemaFactory().getSchemaList().size();
+                for(int i = 0; i < schemaSize; i++){
+                    Bank dataBank = new Bank(writer.getSchemaFactory().getSchemaList().get(i));
+                    schemaBankList.add(dataBank);
+                }
+            }*/
+            String[] filters = getFilterString(opts);
+            if(filters.length>0){
+                for(int i = 0; i < filters.length; i+=2){
+                    int order = Integer.parseInt(filters[i]);
+                    writer.addEventFilter(order, filters[i+1]);                    
+                }
+            }
             writer.setFileName(file.toString());
             writer.open();
             return writer;
@@ -52,10 +73,15 @@ public class HipoFrameWriter extends AbstractEventWriterService<HipoWriterStream
     private String getSchemaDirectory(JSONObject opts) {
         return opts.has(CONF_SCHEMA)
                 ? opts.getString(CONF_SCHEMA)
-                : FileUtils.getEnvironmentPath("CLAS12DIR", "etc/bankdefs/hipo");
+                : FileUtils.getEnvironmentPath("CLAS12DIR", "etc/bankdefs/hipo4");
     }
 
-
+    private String[] getFilterString(JSONObject opts){
+        if(opts.has(CONF_FILTER)==false) return new String[0];
+        String filterString = opts.getString(CONF_FILTER);
+        return filterString.split("-");
+    }
+    
     @Override
     protected void closeWriter() {
         writer.close();
@@ -66,17 +92,45 @@ public class HipoFrameWriter extends AbstractEventWriterService<HipoWriterStream
         try {
             DataFrame  dataFrame = (DataFrame) event;
             
-            int count = dataFrame.getCount();
+            int count = dataFrame.getEntries();
+            Event  hipoEvent = new Event();
+            //int          tag = hipoEvent.getEventTag();
+            
+            
             for(int i = 0; i < count; i++){
-                byte[] buffer = dataFrame.getEntry(i);
-                HipoEvent  hipoEvent = new HipoEvent(buffer);
-                for(int k = 0; k < 32; k++){
-                    int status = hipoEvent.getEventStatusBit(k);
-                    if(status>0) {                 
-                        writer.writeEvent(k,hipoEvent);
-                    }
+                
+                byte[] buffer = dataFrame.getEventCopy(i);
+                hipoEvent.initFrom(buffer);
+            
+                int eventTag = hipoEvent.getEventTag();
+                if(eventTag==1){ 
+                    writer.writeEventAll(hipoEvent);
+                } else {
+                   /* if(this.schemaBankList.size()>0){
+                        Event reduced = hipoEvent.reduceEvent(schemaBankList);
+                        for(int k = 0; k < 32; k++){
+                            int status = hipoEvent.getEventBitMask(k);
+                            if(status>0) {                 
+                                writer.writeEvent(k,hipoEvent);
+                            }
+                        }
+                    } else {
+                        for(int k = 0; k < 32; k++){
+                            int status = hipoEvent.getEventBitMask(k);
+                            if(status>0) {                 
+                                writer.writeEvent(k,hipoEvent);
+                            }
+                        }
+                    }*/
+                   for(int k = 0; k < 32; k++){
+                            int status = hipoEvent.getEventBitMask(k);
+                            if(status>0) {                 
+                                writer.writeEvent(k,hipoEvent);
+                            }
+                   }
                 }
             }
+            
            /* HipoEvent hipo_event = (HipoEvent) event;
             for(int i = 0; i < 5; i++){
                 //int bitStatus = hipo_event.getEventStatus();
